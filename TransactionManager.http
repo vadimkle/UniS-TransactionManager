@@ -1,0 +1,6 @@
+@TransactionManager_HostAddress = http://localhost:5291
+
+GET {{TransactionManager_HostAddress}}/bank/
+Accept: application/json
+
+###
