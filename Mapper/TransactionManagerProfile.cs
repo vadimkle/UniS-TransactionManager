@@ -27,5 +27,9 @@ public class TransactionManagerProfile : Profile
             .ForMember(dst => dst.ClientId, opt => opt.MapFrom(src => src.ClientId))
             .ForMember(dst => dst.Debit, opt => opt.MapFrom(src => src.Debit))
             .ForMember(dst => dst.Credit, opt => opt.MapFrom(src => src.Credit));
+
+        CreateMap<ClientBalanceDto, ClientBalanceResult>()
+            .ForMember(dst => dst.ClientBalance, opt => opt.MapFrom(src => src.Balance))
+            .ForMember(dst => dst.BalanceDateTime, opt => opt.MapFrom(src => src.BalanceDateTime));
     }
 }

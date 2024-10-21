@@ -2,6 +2,7 @@
 using System.Net;
 using System.Net.Mime;
 using System.Text.Json;
+using TransactionManager.Exceptions;
 
 namespace TransactionManager.Middleware;
 
@@ -28,7 +29,7 @@ public class ExceptionMiddleware
         }
     }
 
-    private Task HandleExceptionAsync(HttpContext context, Exception exception)
+    private async Task HandleExceptionAsync(HttpContext context, Exception exception)
     {
         var statusCode = HttpStatusCode.InternalServerError; // 500 by default
         string type = "about:blank"; // Default type when not specified
@@ -36,6 +37,7 @@ public class ExceptionMiddleware
         string detail = exception.Message;
         string instance = context.Request?.GetDisplayUrl() ?? string.Empty;
 
+        //todo: we probably may want to have inner exception messages in "errors" array
         switch (exception)
         {
             case ArgumentNullException _:
@@ -51,7 +53,7 @@ public class ExceptionMiddleware
                 type = "https://example.com/probs/access-denied";
                 break;
 
-            case InvalidOperationException _ when exception.Message.Contains("Insufficient funds"):
+            case InsufficientAmountException:
                 statusCode = HttpStatusCode.PaymentRequired; // 402
                 title = "Insufficient funds";
                 type = "https://example.com/probs/insufficient-funds";
@@ -80,6 +82,6 @@ public class ExceptionMiddleware
         context.Response.ContentType = MediaTypeNames.Application.ProblemJson;
         context.Response.StatusCode = (int)statusCode;
 
-        return context.Response.WriteAsJsonAsync(JsonSerializer.Serialize(problemDetails));
+        await context.Response.WriteAsync(JsonSerializer.Serialize(problemDetails));
     }
 }

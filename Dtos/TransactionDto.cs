@@ -8,8 +8,3 @@ public class TransactionDto
     public decimal? Debit { get; set; }
     public decimal? Credit { get; set; }
 }
-
-public class ReversionDto
-{
-    private Guid TargetTransactionId { get; set; }
-}

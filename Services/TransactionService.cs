@@ -1,5 +1,7 @@
 ﻿using AutoMapper;
+using Microsoft.EntityFrameworkCore;
 using TransactionManager.Dtos;
+using TransactionManager.Exceptions;
 using TransactionManager.Storage;
 using TransactionManager.Storage.Models;
 
@@ -8,26 +10,33 @@ namespace TransactionManager.Services;
 public class TransactionService
 {
     private readonly TransactionRepository _repository;
-    private readonly TransactionContext _context;
     private readonly IMapper _mapper;
 
     public TransactionService(TransactionRepository repository,
-        TransactionContext context,
         IMapper mapper)
     {
         _repository = repository;
         _mapper = mapper;
-        _context = context;
     }
 
-    public async Task<decimal> GetClientBalanceAsync(Guid clientId)
+    public async Task<ClientBalanceDto> GetClientBalanceAsync(Guid clientId)
     {
-        return await _repository.GetClientBalanceAsync(clientId);
+        var transaction = await _repository.ListAll()
+            .OrderByDescending(t => t.CreatedDateUtc)
+            .FirstOrDefaultAsync(t => t.ClientId == clientId);
+
+        if (transaction == null)
+        {
+            throw new KeyNotFoundException($"Client not found. Client ID: {clientId}.");
+        }
+
+        return new ClientBalanceDto
+        { BalanceDateTime = transaction.CreatedDateUtc, Balance = transaction.ClientBalance };
     }
 
     public async Task<(DateTime insertDateTime, decimal clientBalance)> AddTransactionAsync(TransactionDto transaction)
     {
-        var existingTransaction = await _repository.GetTransactionByIdAsync(transaction.TransactionId);
+        var existingTransaction = await _repository.GetByIdAsync(transaction.TransactionId);
         if (existingTransaction != null)
         {
             return (new DateTime(existingTransaction.CreatedDateUtc.Ticks, DateTimeKind.Utc),
@@ -35,61 +44,54 @@ public class TransactionService
         }
 
         var model = _mapper.Map<TransactionModel>(transaction);
-        await using (var dbTransaction = await _context.Database.BeginTransactionAsync())
+        var lastTransaction = await GetLastClientTransactionAsync(model.ClientId);
+
+        if (lastTransaction != null && lastTransaction.Date >= model.Date)
         {
-            try
-            {
-                var lastTransaction = await _repository.GetLastClientTransactionAsync(model);
-
-                if (lastTransaction != null && lastTransaction.Date >= model.Date)
-                {
-                    throw new InvalidOperationException(
-                        "There are more recent transactions for this client. " +
-                        $"DateTime specified {model.Date}. " +
-                        $"Client: {model.ClientId}.");
-                }
-
-                var currentBalance = lastTransaction?.ClientBalance ?? decimal.Zero;
-                if (model.Credit.HasValue && model.Credit.Value > currentBalance)
-                {
-                    throw new InvalidOperationException("Insufficient funds.");
-                }
-
-                if (model.Debit.HasValue)
-                {
-                    currentBalance += model.Debit.Value;
-                }
-                else if (model.Credit.HasValue)
-                {
-                    currentBalance -= model.Credit.Value;
-                }
-                else
-                {
-                    throw new ArgumentException(
-                        $"Transaction amount is not specified. Transaction ID: {model.TransactionId}");
-                }
-
-                model.ClientBalance = currentBalance;
-
-                _context.Transactions.Add(model);
-                // TODO here there is a risk of new record is added to the table and funds are insufficient
-                // TODO use IsolationLevel.Serializable in such case
-                await _context.SaveChangesAsync();
-                await dbTransaction.CommitAsync();
-            }
-            catch
-            {
-                await dbTransaction.RollbackAsync();
-                throw;
-            }
+            throw new InvalidOperationException(
+                "There are more recent transactions for this client. " +
+                $"DateTime specified {model.Date}. " +
+                $"Client: {model.ClientId}.");
         }
+
+        var currentBalance = lastTransaction?.ClientBalance ?? decimal.Zero;
+        if (model.Credit.HasValue && model.Credit.Value > currentBalance)
+        {
+            throw new InsufficientAmountException($"Client {model.ClientId} has insufficient funds.");
+        }
+
+        if (model.Debit.HasValue)
+        {
+            currentBalance += model.Debit.Value;
+        }
+        else if (model.Credit.HasValue)
+        {
+            currentBalance -= model.Credit.Value;
+        }
+        else
+        {
+            throw new ArgumentException(
+                $"Transaction amount is not specified. Transaction ID: {model.TransactionId}");
+        }
+
+        model.ClientBalance = currentBalance;
+
+        await _repository.AddAsync(model);
+        await _repository.SaveChangesAsync();
 
         return (new DateTime(model.CreatedDateUtc.Ticks, DateTimeKind.Utc), model.ClientBalance);
     }
 
+    private async Task<TransactionModel?> GetLastClientTransactionAsync(Guid clientId)
+    {
+        return await _repository.ListAll()
+            .OrderByDescending(t => t.CreatedDateUtc)
+            .FirstOrDefaultAsync(t => t.ClientId == clientId);
+    }
+
     public async Task<(DateTime revertDateTime, decimal clientBalance)> RevertTransactionAsync(Guid transactionId, Guid clientId)
     {
-        var revertingTransaction = await _repository.GetTransactionByIdAsync(transactionId, withTracking: true);
+        var revertingTransaction = await _repository.GetByIdAsync(transactionId, withTracking: true);
         if (revertingTransaction == null)
         {
             throw new KeyNotFoundException($"Transaction not found. Id: {transactionId}");
@@ -98,7 +100,7 @@ public class TransactionService
         if (revertingTransaction.RevertedById.HasValue)
         {
             var revertedBy =
-                await _repository.GetTransactionByIdAsync(revertingTransaction.RevertedById.Value);
+                await _repository.GetByIdAsync(revertingTransaction.RevertedById.Value);
             return (new DateTime(revertedBy!.CreatedDateUtc.Ticks, DateTimeKind.Utc), revertedBy.ClientBalance);
         }
 
@@ -109,33 +111,21 @@ public class TransactionService
             Date = DateTime.UtcNow,
         };
 
-        await using (var dbTransaction = await _context.Database.BeginTransactionAsync())
+        var currentBalance = (await GetClientBalanceAsync(clientId)).Balance;
+        if (revertingTransaction.Credit.HasValue)
         {
-            try
-            {
-                var currentBalance = await _repository.GetClientBalanceAsync(clientId);
-                if (revertingTransaction.Credit.HasValue)
-                {
-                    compensatingTransaction.ClientBalance = currentBalance + revertingTransaction.Credit.Value;
-                    compensatingTransaction.Credit = -revertingTransaction.Credit.Value;
-                }
-                else if (revertingTransaction.Debit.HasValue)
-                {
-                    compensatingTransaction.ClientBalance = currentBalance - revertingTransaction.Debit.Value;
-                    compensatingTransaction.Debit = -revertingTransaction.Debit.Value;
-                }
-                revertingTransaction.RevertedById = compensatingTransaction.TransactionId;
-                _context.Transactions.Add(compensatingTransaction);
-                _context.Transactions.Update(revertingTransaction);
-                await _context.SaveChangesAsync();
-                await dbTransaction.CommitAsync();
-            }
-            catch
-            {
-                await dbTransaction.RollbackAsync();
-                throw;
-            }
+            compensatingTransaction.ClientBalance = currentBalance + revertingTransaction.Credit.Value;
+            compensatingTransaction.Credit = -revertingTransaction.Credit.Value;
         }
+        else if (revertingTransaction.Debit.HasValue)
+        {
+            compensatingTransaction.ClientBalance = currentBalance - revertingTransaction.Debit.Value;
+            compensatingTransaction.Debit = -revertingTransaction.Debit.Value;
+        }
+        revertingTransaction.RevertedById = compensatingTransaction.TransactionId;
+        await _repository.AddAsync(compensatingTransaction);
+        _repository.Update(revertingTransaction);
+        await _repository.SaveChangesAsync();
 
         return (new DateTime(compensatingTransaction.CreatedDateUtc.Ticks, DateTimeKind.Utc),
             compensatingTransaction.ClientBalance);
