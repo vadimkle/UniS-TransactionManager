@@ -46,13 +46,7 @@ namespace TransactionManager
                 app.UseMiddleware<ExceptionMiddleware>();
             }
 
-            if (app.Environment.IsDevelopment())
-            {
-                using var scope = app.Services.CreateScope();
-                var context = scope.ServiceProvider.GetRequiredService<TransactionContext>();
-                context.Database.OpenConnection();
-                context.Database.EnsureCreated();
-            }
+            EnsureDb(app);
 
             app.UseHttpsRedirection();
 
@@ -61,6 +55,14 @@ namespace TransactionManager
             app.MapControllers();
 
             app.Run();
+        }
+
+        private static void EnsureDb(WebApplication app)
+        {
+            using var scope = app.Services.CreateScope();
+            var context = scope.ServiceProvider.GetRequiredService<TransactionContext>();
+            context.Database.OpenConnection();
+            context.Database.EnsureCreated();
         }
     }
 }
