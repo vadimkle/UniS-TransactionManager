@@ -14,7 +14,7 @@ public class DateTimeLessThanOrEqualToNow : ValidationAttribute
     {
         var dateValue = objValue as DateTime? ?? DateTime.MaxValue;
 
-        // suppoze that unspecified date time kind is for UTC time
+        // suppose that unspecified date time kind is for UTC time
         var dateOffset = dateValue.Kind == DateTimeKind.Unspecified
             ? new DateTimeOffset(dateValue, TimeSpan.Zero)
             : new DateTimeOffset(dateValue);

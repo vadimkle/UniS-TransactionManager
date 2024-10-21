@@ -1,30 +1,32 @@
 # TransactionManager
-## DB create notes
-Normally, for database creation we run
+## Database Creation Notes
+This project does not follow the migration approach. Instead, I'm using context.Database.EnsureCreated().
+
+Typically, for database creation, we run:
+
 ```pshell
 dotnet tool install --global dotnet-ef
 dotnet add package Microsoft.EntityFrameworkCore.Design
 dotnet ef migrations add InitialCreate
 dotnet ef database update
 ```
-This project does not suppose migrations approach, I'm using context.Database.EnsureCreated();
+SQLite is used for testing purposes.
 
-SqlIt is used as test approach.
+## Exception Handling
+`ExceptionMiddleware` is used only when `ASPNETCORE_ENVIRONMENT` is set to `Production`. This means it does not fully meet the requirements (RFC 9457). I decided that during development and debugging, we need the ability to read the call stack.
 
-## Launch from Visual Studio
-`https prod` set "ASPNETCORE_ENVIRONMENT" = "Production" env variable
+## Launching from Visual Studio
+`https prod` sets the `ASPNETCORE_ENVIRONMENT` variable to `Production`.
 
-`https devd` set "ASPNETCORE_ENVIRONMENT" = "Development" env variable
+`https devd` sets the `ASPNETCORE_ENVIRONMENT` variable to `Development`.
+## Business Logic
+The `dateTime` property of a transaction should not be earlier than the last one created for the same client. This check was added in addition to provided requirements.
 
-## Business logic
-I suppose transaction's "dateTime" property must be not earlier then the last one created (for the same client). 
-
-## Technical notes
-Table `Clients` is created in order to implement optimistic concurrency. When `Balance` is changed during another 
-db transaction it causes DbUpdateConcurrencyException and current transaction is rolled back
+## Technical Notes
+The `Clients` table is created to implement optimistic concurrency. When the `Balance` is changed during another database transaction, it triggers a DbUpdateConcurrencyException, causing the current transaction to be rolled back.
 
 ### Logging
-Not implemented
+Not yet implemented.
 
 ### Tests
-Not implemented
+Not yet implemented.

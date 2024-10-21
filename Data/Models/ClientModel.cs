@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TransactionManager.Data.Models;
 
-[Index(nameof(ClientId))]
+[Index(nameof(ClientId), IsUnique = true)]
 public class ClientModel
 {
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
