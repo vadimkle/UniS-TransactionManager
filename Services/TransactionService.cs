@@ -1,84 +1,143 @@
-﻿using TransactionManager.Storage;
-using TransactionManager.Views;
+﻿using AutoMapper;
+using TransactionManager.Dtos;
+using TransactionManager.Storage;
+using TransactionManager.Storage.Models;
 
 namespace TransactionManager.Services;
 
 public class TransactionService
 {
-    private readonly TransactionRepository _transactionRepository;
+    private readonly TransactionRepository _repository;
+    private readonly TransactionContext _context;
+    private readonly IMapper _mapper;
 
-    public TransactionService(TransactionRepository transactionRepository)
+    public TransactionService(TransactionRepository repository,
+        TransactionContext context,
+        IMapper mapper)
     {
-        _transactionRepository = transactionRepository;
+        _repository = repository;
+        _mapper = mapper;
+        _context = context;
     }
 
-    // Получение баланса клиента
-    public decimal GetBalance(Guid clientId)
+    public async Task<decimal> GetClientBalanceAsync(Guid clientId)
     {
-        return _transactionRepository.GetBalance(clientId);
+        return await _repository.GetClientBalanceAsync(clientId);
     }
 
-    // Добавление транзакции (дебет или кредит)
-    public (DateTime insertDateTime, decimal clientBalance) AddTransaction(ITransaction transaction)
+    public async Task<(DateTime insertDateTime, decimal clientBalance)> AddTransactionAsync(TransactionDto transaction)
     {
-        // Проверка существования клиента и создание, если отсутствует
-        decimal currentBalance = _transactionRepository.GetBalance(transaction.ClientId);
-
-        // Идемпотентность: проверка существующей транзакции
-        if (_transactionRepository.TransactionExists(transaction.ClientId, transaction.Id))
+        var existingTransaction = await _repository.GetTransactionByIdAsync(transaction.TransactionId);
+        if (existingTransaction != null)
         {
-            var existingTransaction = _transactionRepository.GetTransaction(transaction.ClientId, transaction.Id);
-            return (existingTransaction.DateTime, existingTransaction.Amount);
+            return (new DateTime(existingTransaction.CreatedDateUtc.Ticks, DateTimeKind.Utc),
+                existingTransaction.ClientBalance);
         }
 
-        // Обновление баланса в зависимости от типа транзакции
-        if (transaction is DebitTransaction)
+        var model = _mapper.Map<TransactionModel>(transaction);
+        await using (var dbTransaction = await _context.Database.BeginTransactionAsync())
         {
-            currentBalance += transaction.Amount;
-        }
-        else if (transaction is CreditTransaction)
-        {
-            if (currentBalance < transaction.Amount)
-                throw new InvalidOperationException("Insufficient funds");
+            try
+            {
+                var lastTransaction = await _repository.GetLastClientTransactionAsync(model);
 
-            currentBalance -= transaction.Amount;
-        }
-        else
-        {
-            throw new NotImplementedException(
-                $"Handling transactions of type {transaction.GetType().Name} is not implemented");
+                if (lastTransaction != null && lastTransaction.Date >= model.Date)
+                {
+                    throw new InvalidOperationException(
+                        "There are more recent transactions for this client. " +
+                        $"DateTime specified {model.Date}. " +
+                        $"Client: {model.ClientId}.");
+                }
+
+                var currentBalance = lastTransaction?.ClientBalance ?? decimal.Zero;
+                if (model.Credit.HasValue && model.Credit.Value > currentBalance)
+                {
+                    throw new InvalidOperationException("Insufficient funds.");
+                }
+
+                if (model.Debit.HasValue)
+                {
+                    currentBalance += model.Debit.Value;
+                }
+                else if (model.Credit.HasValue)
+                {
+                    currentBalance -= model.Credit.Value;
+                }
+                else
+                {
+                    throw new ArgumentException(
+                        $"Transaction amount is not specified. Transaction ID: {model.TransactionId}");
+                }
+
+                model.ClientBalance = currentBalance;
+
+                _context.Transactions.Add(model);
+                // TODO here there is a risk of new record is added to the table and funds are insufficient
+                // TODO use IsolationLevel.Serializable in such case
+                await _context.SaveChangesAsync();
+                await dbTransaction.CommitAsync();
+            }
+            catch
+            {
+                await dbTransaction.RollbackAsync();
+                throw;
+            }
         }
 
-        // Сохраняем транзакцию и обновляем баланс
-        _transactionRepository.AddTransaction(transaction);
-        _transactionRepository.UpdateBalance(transaction.ClientId, currentBalance);
-
-        return (DateTime.UtcNow, currentBalance);
+        return (new DateTime(model.CreatedDateUtc.Ticks, DateTimeKind.Utc), model.ClientBalance);
     }
 
-    // Откат транзакции
-    public (DateTime revertDateTime, decimal clientBalance) RevertTransaction(Guid transactionId, Guid clientId)
+    public async Task<(DateTime revertDateTime, decimal clientBalance)> RevertTransactionAsync(Guid transactionId, Guid clientId)
     {
-        if (!_transactionRepository.TransactionExists(clientId, transactionId))
-            throw new InvalidOperationException("Transaction not found");
-
-        var transaction = _transactionRepository.GetTransaction(clientId, transactionId);
-        decimal currentBalance = _transactionRepository.GetBalance(clientId);
-
-        // Откат транзакции
-        if (transaction is CreditTransaction)
+        var revertingTransaction = await _repository.GetTransactionByIdAsync(transactionId, withTracking: true);
+        if (revertingTransaction == null)
         {
-            currentBalance -= transaction.Amount;
-        }
-        else if (transaction is DebitTransaction)
-        {
-            currentBalance += transaction.Amount;
+            throw new KeyNotFoundException($"Transaction not found. Id: {transactionId}");
         }
 
-        // Удаляем транзакцию и обновляем баланс
-        _transactionRepository.RemoveTransaction(clientId, transactionId);
-        _transactionRepository.UpdateBalance(clientId, currentBalance);
+        if (revertingTransaction.RevertedById.HasValue)
+        {
+            var revertedBy =
+                await _repository.GetTransactionByIdAsync(revertingTransaction.RevertedById.Value);
+            return (new DateTime(revertedBy!.CreatedDateUtc.Ticks, DateTimeKind.Utc), revertedBy.ClientBalance);
+        }
 
-        return (DateTime.UtcNow, currentBalance);
+        var compensatingTransaction = new TransactionModel
+        {
+            TransactionId = Guid.NewGuid(),
+            ClientId = clientId,
+            Date = DateTime.UtcNow,
+        };
+
+        await using (var dbTransaction = await _context.Database.BeginTransactionAsync())
+        {
+            try
+            {
+                var currentBalance = await _repository.GetClientBalanceAsync(clientId);
+                if (revertingTransaction.Credit.HasValue)
+                {
+                    compensatingTransaction.ClientBalance = currentBalance + revertingTransaction.Credit.Value;
+                    compensatingTransaction.Credit = -revertingTransaction.Credit.Value;
+                }
+                else if (revertingTransaction.Debit.HasValue)
+                {
+                    compensatingTransaction.ClientBalance = currentBalance - revertingTransaction.Debit.Value;
+                    compensatingTransaction.Debit = -revertingTransaction.Debit.Value;
+                }
+                revertingTransaction.RevertedById = compensatingTransaction.TransactionId;
+                _context.Transactions.Add(compensatingTransaction);
+                _context.Transactions.Update(revertingTransaction);
+                await _context.SaveChangesAsync();
+                await dbTransaction.CommitAsync();
+            }
+            catch
+            {
+                await dbTransaction.RollbackAsync();
+                throw;
+            }
+        }
+
+        return (new DateTime(compensatingTransaction.CreatedDateUtc.Ticks, DateTimeKind.Utc),
+            compensatingTransaction.ClientBalance);
     }
 }

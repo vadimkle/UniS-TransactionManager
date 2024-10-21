@@ -1,64 +1,100 @@
-﻿using TransactionManager.Views;
+﻿using Microsoft.EntityFrameworkCore;
+using System.Data;
+using TransactionManager.Storage.Models;
 
 namespace TransactionManager.Storage
 {
     public class TransactionRepository
     {
-        // Хранилище транзакций: клиент -> транзакции
-        private readonly Dictionary<Guid, Dictionary<Guid, ITransaction>> _clientTransactions = new();
+        private readonly TransactionContext _context;
 
-        // Хранилище балансов клиентов: клиент -> баланс
-        private readonly Dictionary<Guid, decimal> _clientBalances = new();
-
-        // Получение баланса клиента
-        public decimal GetBalance(Guid clientId)
+        public TransactionRepository(TransactionContext context)
         {
-            return _clientBalances.ContainsKey(clientId) ? _clientBalances[clientId] : 0;
+            _context = context;
         }
 
-        // Добавление транзакции клиенту
-        public void AddTransaction(ITransaction transaction)
+        public async Task<TransactionModel?> GetTransactionByIdAsync(Guid transactionId, bool withTracking = false)
         {
-            if (!_clientTransactions.ContainsKey(transaction.ClientId))
+            if (withTracking)
             {
-                _clientTransactions[transaction.ClientId] = new Dictionary<Guid, ITransaction>();
-                _clientBalances[transaction.ClientId] = 0;
+                return await _context.Transactions
+                    .FirstOrDefaultAsync(t => t.TransactionId == transactionId);
+            }
+            return await _context.Transactions.AsNoTracking()
+                .FirstOrDefaultAsync(t => t.TransactionId == transactionId);
+        }
+
+        public async Task<(DateTime Date, decimal ClientBalance)> AddTransactionAsync(TransactionModel transaction)
+        {
+            await using (var dbTransaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable))
+            {
+                try
+                {
+                    var lastTransaction = await _context.Transactions
+                        .OrderByDescending(t => t.CreatedDateUtc)
+                        .FirstOrDefaultAsync(t => t.ClientId == transaction.ClientId);
+
+                    if (lastTransaction != null && lastTransaction.Date >= transaction.Date)
+                    {
+                        throw new InvalidOperationException(
+                            "There are more recent transactions for this client. " +
+                            $"DateTime specified {transaction.Date}. " +
+                            $"Client: {transaction.ClientId}.");
+                    }
+
+                    var currentBalance = lastTransaction?.ClientBalance?? decimal.Zero;
+                    if (transaction.Credit.HasValue && transaction.Credit.Value > currentBalance)
+                    {
+                        throw new InvalidOperationException("Insufficient funds.");
+                    }
+
+                    if (transaction.Debit.HasValue)
+                    {
+                        currentBalance += transaction.Debit.Value;
+                    }
+                    else if (transaction.Credit.HasValue)
+                    {
+                        currentBalance -= transaction.Credit.Value;
+                    }
+                    else
+                    {
+                        throw new ArgumentException("Transaction amount is not specified");
+                    }
+
+                    transaction.ClientBalance = currentBalance;
+
+                    _context.Transactions.Add(transaction);
+                    await _context.SaveChangesAsync();
+                    await dbTransaction.CommitAsync();
+                }
+                catch
+                {
+                    await dbTransaction.RollbackAsync();
+                    throw;
+                }
+            }
+            return (transaction.CreatedDateUtc, transaction.ClientBalance);
+        }
+
+        public async Task<decimal> GetClientBalanceAsync(Guid clientId)
+        {
+            var transaction = await _context.Transactions
+                .OrderByDescending(t => t.CreatedDateUtc)
+                .FirstOrDefaultAsync(t => t.ClientId == clientId);
+
+            if (transaction == null)
+            {
+                throw new KeyNotFoundException($"Client not found. Client ID: {clientId}.");
             }
 
-            var transactions = _clientTransactions[transaction.ClientId];
-            transactions[transaction.Id] = transaction;
+            return transaction?.ClientBalance ?? decimal.Zero;
         }
 
-        // Проверка существования транзакции
-        public bool TransactionExists(Guid clientId, Guid transactionId)
+        internal async Task<TransactionModel?> GetLastClientTransactionAsync(TransactionModel model)
         {
-            return _clientTransactions.ContainsKey(clientId) && _clientTransactions[clientId].ContainsKey(transactionId);
-        }
-
-        // Получение транзакции по клиенту и ID транзакции
-        public ITransaction GetTransaction(Guid clientId, Guid transactionId)
-        {
-            if (TransactionExists(clientId, transactionId))
-            {
-                return _clientTransactions[clientId][transactionId];
-            }
-
-            throw new InvalidOperationException("Transaction not found");
-        }
-
-        // Удаление транзакции
-        public void RemoveTransaction(Guid clientId, Guid transactionId)
-        {
-            if (_clientTransactions.ContainsKey(clientId))
-            {
-                _clientTransactions[clientId].Remove(transactionId);
-            }
-        }
-
-        // Обновление баланса клиента
-        public void UpdateBalance(Guid clientId, decimal amount)
-        {
-            _clientBalances[clientId] = amount;
+            return await _context.Transactions.AsNoTracking()
+                .OrderByDescending(t => t.CreatedDateUtc)
+                .FirstOrDefaultAsync(t => t.ClientId == model.ClientId);
         }
     }
 }

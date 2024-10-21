@@ -1,5 +1,6 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using Microsoft.AspNetCore.Http.Extensions;
 using System.Net;
+using System.Net.Mime;
 using System.Text.Json;
 
 namespace TransactionManager.Middleware;
@@ -21,8 +22,7 @@ public class ExceptionMiddleware
         }
         catch (Exception ex)
         {
-            // Log the error
-            // ...
+            // todo - add logging
 
             await HandleExceptionAsync(context, ex);
         }
@@ -30,17 +30,56 @@ public class ExceptionMiddleware
 
     private Task HandleExceptionAsync(HttpContext context, Exception exception)
     {
-        bool isValidation = exception is ValidationException;
-        context.Response.ContentType = "application/json";
-        context.Response.StatusCode =
-            isValidation ? (int)HttpStatusCode.BadRequest : (int)HttpStatusCode.InternalServerError;
+        var statusCode = HttpStatusCode.InternalServerError; // 500 by default
+        string type = "about:blank"; // Default type when not specified
+        string title = "Internal Server Error";
+        string detail = exception.Message;
+        string instance = context.Request?.GetDisplayUrl() ?? string.Empty;
 
-        var response = new
+        switch (exception)
         {
-            StatusCode = context.Response.StatusCode,
-            Message = $"{(isValidation ? "Bad request" : "Internal Server Error")}:{exception.Message}"
+            case ArgumentNullException _:
+            case ArgumentException _:
+                statusCode = HttpStatusCode.BadRequest; // 400
+                title = "Invalid request";
+                type = "https://example.com/probs/invalid-request";
+                break;
+
+            case UnauthorizedAccessException _:
+                statusCode = HttpStatusCode.Forbidden; // 403
+                title = "Access denied";
+                type = "https://example.com/probs/access-denied";
+                break;
+
+            case InvalidOperationException _ when exception.Message.Contains("Insufficient funds"):
+                statusCode = HttpStatusCode.PaymentRequired; // 402
+                title = "Insufficient funds";
+                type = "https://example.com/probs/insufficient-funds";
+                break;
+
+            case KeyNotFoundException _:
+                statusCode = HttpStatusCode.NotFound; // 404
+                title = "Resource not found";
+                type = "https://example.com/probs/not-found";
+                break;
+
+            default:
+                // Keep default 500 error with "about:blank" type
+                break;
+        }
+
+        var problemDetails = new
+        {
+            type,
+            title,
+            status = (int)statusCode,
+            detail,
+            instance
         };
 
-        return context.Response.WriteAsync(JsonSerializer.Serialize(response));
+        context.Response.ContentType = MediaTypeNames.Application.ProblemJson;
+        context.Response.StatusCode = (int)statusCode;
+
+        return context.Response.WriteAsJsonAsync(JsonSerializer.Serialize(problemDetails));
     }
 }
