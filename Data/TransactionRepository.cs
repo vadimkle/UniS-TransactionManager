@@ -1,8 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
-using TransactionManager.Storage.Models;
+using TransactionManager.Data.Models;
 
-namespace TransactionManager.Storage
+namespace TransactionManager.Data
 {
     public class TransactionRepository
     {
@@ -17,7 +17,7 @@ namespace TransactionManager.Storage
             return _context.Transactions.AsNoTracking();
         }
 
-        public async Task<TransactionModel?> GetByIdAsync(Guid transactionId, bool withTracking = false)
+        public async Task<TransactionModel?> GetTransactionByIdAsync(Guid transactionId, bool withTracking = false)
         {
             if (withTracking)
             {
@@ -28,14 +28,30 @@ namespace TransactionManager.Storage
                 .FirstOrDefaultAsync(t => t.TransactionId == transactionId);
         }
 
-        public async Task<EntityEntry<TransactionModel>> AddAsync(TransactionModel model)
+        public async Task<ClientModel?> GetClientByIdAsync(Guid clientId)
+        {
+            return await _context.Clients
+                .FirstOrDefaultAsync(c => c.ClientId == clientId);
+        }
+
+        public async Task<EntityEntry<TransactionModel>> AddTransactionAsync(TransactionModel model)
         {
             return await _context.Transactions.AddAsync(model);
         }
 
-        public EntityEntry<TransactionModel> Update(TransactionModel model)
+        public async Task<EntityEntry<ClientModel>> AddClientAsync(ClientModel model)
+        {
+            return await _context.Clients.AddAsync(model);
+        }
+
+        public EntityEntry<TransactionModel> UpdateTransaction(TransactionModel model)
         {
             return _context.Transactions.Update(model);
+        }
+
+        public EntityEntry<ClientModel> UpdateClient(ClientModel model)
+        {
+            return _context.Clients.Update(model);
         }
 
         public async Task<int> SaveChangesAsync()

@@ -1,14 +1,14 @@
 using Microsoft.EntityFrameworkCore;
+using TransactionManager.Data;
 using TransactionManager.Middleware;
 using TransactionManager.Services;
-using TransactionManager.Storage;
 using TransactionManager.Validators;
 
 namespace TransactionManager
 {
     public class Program
     {
-        public static void Main(string[] args)
+        public static async Task Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
 
@@ -22,11 +22,11 @@ namespace TransactionManager
 
             var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
             builder.Services.AddDbContext<TransactionContext>(options =>
-                options.UseSqlite(connectionString));
+                options.UseSqlite(connectionString)
+                    /*.EnableSensitiveDataLogging()*/);
 
             builder.Services.AddControllers();
 
-            // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
 
@@ -46,7 +46,7 @@ namespace TransactionManager
                 app.UseMiddleware<ExceptionMiddleware>();
             }
 
-            EnsureDb(app);
+            await EnsureDb(app);
 
             app.UseHttpsRedirection();
 
@@ -54,15 +54,24 @@ namespace TransactionManager
 
             app.MapControllers();
 
-            app.Run();
+            await app.RunAsync();
         }
 
-        private static void EnsureDb(WebApplication app)
+        private static async Task EnsureDb(WebApplication app)
         {
             using var scope = app.Services.CreateScope();
             var context = scope.ServiceProvider.GetRequiredService<TransactionContext>();
-            context.Database.OpenConnection();
-            context.Database.EnsureCreated();
+            await context.Database.OpenConnectionAsync();
+            if (await context.Database.EnsureCreatedAsync())
+            {
+                await context.Database.ExecuteSqlRawAsync(@"CREATE TRIGGER UpdateClientVersion
+AFTER UPDATE ON Clients
+BEGIN
+    UPDATE Clients
+    SET Version = Version + 1
+    WHERE rowid = NEW.rowid;
+END;");
+            }
         }
     }
 }

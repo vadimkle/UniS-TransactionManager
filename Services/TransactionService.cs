@@ -1,9 +1,9 @@
 ﻿using AutoMapper;
 using Microsoft.EntityFrameworkCore;
+using TransactionManager.Data;
+using TransactionManager.Data.Models;
 using TransactionManager.Dtos;
 using TransactionManager.Exceptions;
-using TransactionManager.Storage;
-using TransactionManager.Storage.Models;
 
 namespace TransactionManager.Services;
 
@@ -36,7 +36,7 @@ public class TransactionService
 
     public async Task<(DateTime insertDateTime, decimal clientBalance)> AddTransactionAsync(TransactionDto transaction)
     {
-        var existingTransaction = await _repository.GetByIdAsync(transaction.TransactionId);
+        var existingTransaction = await _repository.GetTransactionByIdAsync(transaction.TransactionId);
         if (existingTransaction != null)
         {
             return (new DateTime(existingTransaction.CreatedDateUtc.Ticks, DateTimeKind.Utc),
@@ -75,8 +75,19 @@ public class TransactionService
         }
 
         model.ClientBalance = currentBalance;
+        if (lastTransaction == null)
+        {
+            var client = new ClientModel { Balance = currentBalance, ClientId = model.ClientId };
+            await _repository.AddClientAsync(client);
+        }
+        else
+        {
+            var client = await _repository.GetClientByIdAsync(model.ClientId);
+            client!.Balance = currentBalance;
+            _repository.UpdateClient(client);
+        }
 
-        await _repository.AddAsync(model);
+        await _repository.AddTransactionAsync(model);
         await _repository.SaveChangesAsync();
 
         return (new DateTime(model.CreatedDateUtc.Ticks, DateTimeKind.Utc), model.ClientBalance);
@@ -91,16 +102,16 @@ public class TransactionService
 
     public async Task<(DateTime revertDateTime, decimal clientBalance)> RevertTransactionAsync(Guid transactionId, Guid clientId)
     {
-        var revertingTransaction = await _repository.GetByIdAsync(transactionId, withTracking: true);
-        if (revertingTransaction == null)
+        var revertedTransaction = await _repository.GetTransactionByIdAsync(transactionId, withTracking: true);
+        if (revertedTransaction == null)
         {
             throw new KeyNotFoundException($"Transaction not found. Id: {transactionId}");
         }
 
-        if (revertingTransaction.RevertedById.HasValue)
+        if (revertedTransaction.RevertedById.HasValue)
         {
             var revertedBy =
-                await _repository.GetByIdAsync(revertingTransaction.RevertedById.Value);
+                await _repository.GetTransactionByIdAsync(revertedTransaction.RevertedById.Value);
             return (new DateTime(revertedBy!.CreatedDateUtc.Ticks, DateTimeKind.Utc), revertedBy.ClientBalance);
         }
 
@@ -112,19 +123,19 @@ public class TransactionService
         };
 
         var currentBalance = (await GetClientBalanceAsync(clientId)).Balance;
-        if (revertingTransaction.Credit.HasValue)
+        if (revertedTransaction.Credit.HasValue)
         {
-            compensatingTransaction.ClientBalance = currentBalance + revertingTransaction.Credit.Value;
-            compensatingTransaction.Credit = -revertingTransaction.Credit.Value;
+            compensatingTransaction.ClientBalance = currentBalance + revertedTransaction.Credit.Value;
+            compensatingTransaction.Credit = -revertedTransaction.Credit.Value;
         }
-        else if (revertingTransaction.Debit.HasValue)
+        else if (revertedTransaction.Debit.HasValue)
         {
-            compensatingTransaction.ClientBalance = currentBalance - revertingTransaction.Debit.Value;
-            compensatingTransaction.Debit = -revertingTransaction.Debit.Value;
+            compensatingTransaction.ClientBalance = currentBalance - revertedTransaction.Debit.Value;
+            compensatingTransaction.Debit = -revertedTransaction.Debit.Value;
         }
-        revertingTransaction.RevertedById = compensatingTransaction.TransactionId;
-        await _repository.AddAsync(compensatingTransaction);
-        _repository.Update(revertingTransaction);
+        revertedTransaction.RevertedById = compensatingTransaction.TransactionId;
+        await _repository.AddTransactionAsync(compensatingTransaction);
+        _repository.UpdateTransaction(revertedTransaction);
         await _repository.SaveChangesAsync();
 
         return (new DateTime(compensatingTransaction.CreatedDateUtc.Ticks, DateTimeKind.Utc),

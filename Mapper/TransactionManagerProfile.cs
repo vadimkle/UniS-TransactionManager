@@ -1,6 +1,6 @@
 ﻿using AutoMapper;
+using TransactionManager.Data.Models;
 using TransactionManager.Dtos;
-using TransactionManager.Storage.Models;
 using TransactionManager.Views;
 
 namespace TransactionManager.Mapper;

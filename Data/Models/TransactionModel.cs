@@ -2,7 +2,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace TransactionManager.Storage.Models;
+namespace TransactionManager.Data.Models;
 
 [Index(nameof(TransactionId), IsUnique = true)]
 [Index(nameof(ClientId))]

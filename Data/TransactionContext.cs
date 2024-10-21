@@ -1,12 +1,13 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using TransactionManager.Storage.Models;
+using TransactionManager.Data.Models;
 
-namespace TransactionManager.Storage;
+namespace TransactionManager.Data;
 
 public class TransactionContext : DbContext
 {
     public DbSet<TransactionModel> Transactions { get; set; }
+    public DbSet<ClientModel> Clients { get; set; }
 
     public TransactionContext(DbContextOptions<TransactionContext> options)
         : base(options)
@@ -15,7 +16,7 @@ public class TransactionContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
-        optionsBuilder.LogTo(Console.WriteLine);
+        //optionsBuilder.LogTo(Console.WriteLine);
         //optionsBuilder.UseSqlite("Data Source=transactions.db");
     }
 
@@ -38,6 +39,12 @@ public class TransactionContext : DbContext
         modelBuilder.Entity<TransactionModel>()
             .Property(b => b.CreatedDateUtc)
             .HasDefaultValueSql("DATETIME()");
+
+        modelBuilder.Entity<ClientModel>()
+            .Property(p => p.Version)
+            .IsRowVersion()
+            .HasDefaultValue(0);
+
         base.OnModelCreating(modelBuilder);
     }
 }
