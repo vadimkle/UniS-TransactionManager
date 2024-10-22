@@ -1,8 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using TransactionManager.Data;
+using TransactionManager.Data.Models;
 using TransactionManager.Middleware;
 using TransactionManager.Services;
-using TransactionManager.Validators;
 
 namespace TransactionManager
 {
@@ -13,9 +13,9 @@ namespace TransactionManager
             var builder = WebApplication.CreateBuilder(args);
 
             // Add services to the container.
-            builder.Services.AddScoped<TransactionService>();
-            builder.Services.AddScoped<TransactionValidator>();
-            builder.Services.AddScoped<TransactionRepository>();
+            builder.Services.AddScoped<ITransactionRepository, TransactionRepository>();
+            builder.Services.AddScoped<ITransactionService, TransactionService>();
+            //builder.Services.AddScoped<TransactionValidator>(); -- for future complex validations :-)
 
             builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 
@@ -23,7 +23,7 @@ namespace TransactionManager
             var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
             builder.Services.AddDbContext<TransactionContext>(options =>
                 options.UseSqlite(connectionString)
-                    .EnableSensitiveDataLogging());
+                    /*.EnableSensitiveDataLogging()*/);
 
             builder.Services.AddControllers();
 
@@ -67,8 +67,8 @@ namespace TransactionManager
                 await context.Database.ExecuteSqlRawAsync(@$"CREATE TRIGGER UpdateClientVersion
 AFTER UPDATE ON {nameof(TransactionContext.Clients)}
 BEGIN
-    UPDATE Clients
-    SET LastUpdated = DATETIME()
+    UPDATE {nameof(TransactionContext.Clients)}
+    SET {nameof(ClientModel.LastUpdated)} = DATETIME()
     WHERE rowid = NEW.rowid;
 END;");
             }

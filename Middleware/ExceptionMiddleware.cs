@@ -72,6 +72,11 @@ public class ExceptionMiddleware
                 title = "Client balance has been changed. Please repeat transaction";
                 type = "https://example.com/probs/conflict";
                 break;
+            case NotLastTransactionException:
+                statusCode = HttpStatusCode.Conflict;
+                title = "The transaction cannot be backdated.";
+                type = "https://example.com/probs/conflict";
+                break;
             default:
                 // Keep default 500 error with "about:blank" type
                 break;

@@ -1,5 +1,4 @@
 ﻿using AutoMapper;
-using Microsoft.EntityFrameworkCore;
 using TransactionManager.Data;
 using TransactionManager.Data.Models;
 using TransactionManager.Dtos;
@@ -7,19 +6,26 @@ using TransactionManager.Exceptions;
 
 namespace TransactionManager.Services;
 
-public class TransactionService
+public interface ITransactionService
 {
-    private readonly TransactionRepository _repository;
+    Task<TimeAndMoneyDto> GetClientBalanceAsync(Guid clientId);
+    Task<TimeAndMoneyDto> AddTransactionAsync(TransactionDto transaction);
+    Task<TimeAndMoneyDto> RevertTransactionAsync(Guid transactionId, Guid clientId);
+}
+
+public class TransactionService : ITransactionService
+{
+    private readonly ITransactionRepository _repository;
     private readonly IMapper _mapper;
 
-    public TransactionService(TransactionRepository repository,
+    public TransactionService(ITransactionRepository repository,
         IMapper mapper)
     {
         _repository = repository;
         _mapper = mapper;
     }
 
-    public async Task<ClientBalanceDto> GetClientBalanceAsync(Guid clientId)
+    public async Task<TimeAndMoneyDto> GetClientBalanceAsync(Guid clientId)
     {
         var client = await _repository.GetClientByIdAsync(clientId);
 
@@ -28,77 +34,59 @@ public class TransactionService
             throw new KeyNotFoundException($"Client not found. Client ID: {clientId}.");
         }
 
-        return new ClientBalanceDto
+        return new TimeAndMoneyDto
         { BalanceDateTime = client.LastUpdated, Balance = client.Balance };
     }
 
-    public async Task<(DateTime insertDateTime, decimal clientBalance)> AddTransactionAsync(TransactionDto transaction)
+    public async Task<TimeAndMoneyDto> AddTransactionAsync(TransactionDto transaction)
     {
         var existingTransaction = await _repository.GetTransactionByIdAsync(transaction.TransactionId);
         if (existingTransaction != null)
         {
-            return (new DateTime(existingTransaction.CreatedDateUtc.Ticks, DateTimeKind.Utc),
-                existingTransaction.ClientBalance);
+            return new TimeAndMoneyDto(existingTransaction.CreatedDateUtc, existingTransaction.ClientBalance);
         }
 
-        var model = _mapper.Map<TransactionModel>(transaction);
-        var lastTransaction = await GetLastClientTransactionAsync(model.ClientId);
+        var client = await _repository.GetClientByIdAsync(transaction.ClientId);
 
-        if (lastTransaction != null && lastTransaction.Date >= model.Date)
-        {
-            throw new InvalidOperationException(
-                "There are more recent transactions for this client. " +
-                $"DateTime specified {model.Date}. " +
-                $"Client: {model.ClientId}.");
-        }
+        ValidateTime(transaction.DateTime, client);
+        ValidateBalance(transaction, client);
+        var currentBalance = client?.Balance ?? decimal.Zero;
 
-        var currentBalance = lastTransaction?.ClientBalance ?? decimal.Zero;
-        if (model.Credit.HasValue && model.Credit.Value > currentBalance)
+        if (transaction.Debit.HasValue)
         {
-            throw new InsufficientAmountException($"Client {model.ClientId} has insufficient funds.");
+            currentBalance += transaction.Debit.Value;
         }
-
-        if (model.Debit.HasValue)
+        else if (transaction.Credit.HasValue)
         {
-            currentBalance += model.Debit.Value;
-        }
-        else if (model.Credit.HasValue)
-        {
-            currentBalance -= model.Credit.Value;
+            currentBalance -= transaction.Credit.Value;
         }
         else
         {
             throw new ArgumentException(
-                $"Transaction amount is not specified. Transaction ID: {model.TransactionId}");
+                $"Transaction amount is not specified. Transaction ID: {transaction.TransactionId}");
         }
 
+        var model = _mapper.Map<TransactionModel>(transaction);
+
         model.ClientBalance = currentBalance;
-        if (lastTransaction == null)
+        if (client == null)
         {
-            var client = new ClientModel { Balance = currentBalance, ClientId = model.ClientId };
+            client = new ClientModel { Balance = currentBalance, ClientId = model.ClientId };
             await _repository.AddClientAsync(client);
         }
         else
         {
-            var client = await _repository.GetClientByIdAsync(model.ClientId);
-            client!.Balance = currentBalance;
+            client.Balance = currentBalance;
             _repository.UpdateClient(client);
         }
 
         await _repository.AddTransactionAsync(model);
         await _repository.SaveChangesAsync();
 
-        return (new DateTime(model.CreatedDateUtc.Ticks, DateTimeKind.Utc), model.ClientBalance);
+        return new TimeAndMoneyDto(model.CreatedDateUtc, model.ClientBalance);
     }
 
-    private async Task<TransactionModel?> GetLastClientTransactionAsync(Guid clientId)
-    {
-        return await _repository.ListAll()
-            .OrderByDescending(t => t.CreatedDateUtc)
-            .FirstOrDefaultAsync(t => t.ClientId == clientId);
-    }
-
-    public async Task<(DateTime revertDateTime, decimal clientBalance)> RevertTransactionAsync(Guid transactionId, Guid clientId)
+    public async Task<TimeAndMoneyDto> RevertTransactionAsync(Guid transactionId, Guid clientId)
     {
         var revertedTransaction = await _repository.GetTransactionByIdAsync(transactionId, withTracking: true);
         if (revertedTransaction == null)
@@ -110,7 +98,7 @@ public class TransactionService
         {
             var revertedBy =
                 await _repository.GetTransactionByIdAsync(revertedTransaction.RevertedById.Value);
-            return (new DateTime(revertedBy!.CreatedDateUtc.Ticks, DateTimeKind.Utc), revertedBy.ClientBalance);
+            return new TimeAndMoneyDto(revertedBy!.CreatedDateUtc, revertedBy.ClientBalance);
         }
 
         var compensatingTransaction = new TransactionModel
@@ -141,7 +129,27 @@ public class TransactionService
         _repository.UpdateTransaction(revertedTransaction);
         await _repository.SaveChangesAsync();
 
-        return (new DateTime(compensatingTransaction.CreatedDateUtc.Ticks, DateTimeKind.Utc),
-            compensatingTransaction.ClientBalance);
+        return new TimeAndMoneyDto(compensatingTransaction.CreatedDateUtc, compensatingTransaction.ClientBalance);
+    }
+
+    private void ValidateBalance(TransactionDto transaction, ClientModel? client)
+    {
+        var currentBalance = client?.Balance ?? decimal.Zero;
+        if (transaction.Credit.HasValue && transaction.Credit.Value > currentBalance)
+        {
+            throw new InsufficientAmountException($"Client {transaction.ClientId} has insufficient funds.");
+        }
+    }
+
+    private void ValidateTime(DateTime transactionDateTime, ClientModel? client)
+    {
+        if (client != null && client.LastUpdated >= transactionDateTime)
+        {
+            throw new NotLastTransactionException(
+                "There are more recent transactions for this client. " +
+                $"DateTime specified {transactionDateTime}. " +
+                $"Last transaction is on {client.LastUpdated}. " +
+                $"Client: {client.ClientId}.");
+        }
     }
 }

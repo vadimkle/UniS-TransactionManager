@@ -4,7 +4,19 @@ using TransactionManager.Data.Models;
 
 namespace TransactionManager.Data
 {
-    public class TransactionRepository
+    public interface ITransactionRepository
+    {
+        IQueryable<TransactionModel> ListAll();
+        Task<TransactionModel?> GetTransactionByIdAsync(Guid transactionId, bool withTracking = false);
+        Task<ClientModel?> GetClientByIdAsync(Guid clientId);
+        Task<EntityEntry<TransactionModel>> AddTransactionAsync(TransactionModel model);
+        Task<EntityEntry<ClientModel>> AddClientAsync(ClientModel model);
+        EntityEntry<TransactionModel> UpdateTransaction(TransactionModel model);
+        EntityEntry<ClientModel> UpdateClient(ClientModel model);
+        Task<int> SaveChangesAsync();
+    }
+
+    public class TransactionRepository : ITransactionRepository
     {
         private readonly TransactionContext _context;
 
@@ -12,6 +24,7 @@ namespace TransactionManager.Data
         {
             _context = context;
         }
+
         public IQueryable<TransactionModel> ListAll()
         {
             return _context.Transactions.AsNoTracking();

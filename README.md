@@ -23,6 +23,10 @@ SQLite is used for testing purposes.
 The `dateTime` property of a transaction should not be earlier than the last one created for the same client. 
 This check was added in addition to provided requirements.
 
+Another issue is an ability to make balance **negative**.
+I decided `transaction revert` has more priority than positive balance.
+But it's subject to discuss.
+
 ## Technical Notes
 The `Clients` table is created to implement optimistic concurrency. 
 When the `Balance` is changed during another database transaction, it triggers a `DbUpdateConcurrencyException`, 

@@ -28,8 +28,19 @@ public class TransactionManagerProfile : Profile
             .ForMember(dst => dst.Debit, opt => opt.MapFrom(src => src.Debit))
             .ForMember(dst => dst.Credit, opt => opt.MapFrom(src => src.Credit));
 
-        CreateMap<ClientBalanceDto, ClientBalanceResult>()
+        CreateMap<TimeAndMoneyDto, ClientBalanceResult>()
             .ForMember(dst => dst.ClientBalance, opt => opt.MapFrom(src => src.Balance))
-            .ForMember(dst => dst.BalanceDateTime, opt => opt.MapFrom(src => src.BalanceDateTime));
+            .ForMember(dst => dst.BalanceDateTime,
+                opt => opt.MapFrom(src => new DateTime(src.BalanceDateTime.Ticks, DateTimeKind.Utc)));
+
+        CreateMap<TimeAndMoneyDto, RevertTransactionResult>()
+            .ForMember(dst => dst.ClientBalance, opt => opt.MapFrom(src => src.Balance))
+            .ForMember(dst => dst.RevertDateTime,
+                opt => opt.MapFrom(src => new DateTime(src.BalanceDateTime.Ticks, DateTimeKind.Utc)));
+
+        CreateMap<TimeAndMoneyDto, InsertTransactionResult>()
+            .ForMember(dst => dst.ClientBalance, opt => opt.MapFrom(src => src.Balance))
+            .ForMember(dst => dst.InsertDateTime,
+                opt => opt.MapFrom(src => new DateTime(src.BalanceDateTime.Ticks, DateTimeKind.Utc)));
     }
 }
