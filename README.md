@@ -20,10 +20,16 @@ SQLite is used for testing purposes.
 
 `https devd` sets the `ASPNETCORE_ENVIRONMENT` variable to `Development`.
 ## Business Logic
-The `dateTime` property of a transaction should not be earlier than the last one created for the same client. This check was added in addition to provided requirements.
+The `dateTime` property of a transaction should not be earlier than the last one created for the same client. 
+This check was added in addition to provided requirements.
 
 ## Technical Notes
-The `Clients` table is created to implement optimistic concurrency. When the `Balance` is changed during another database transaction, it triggers a DbUpdateConcurrencyException, causing the current transaction to be rolled back.
+The `Clients` table is created to implement optimistic concurrency. 
+When the `Balance` is changed during another database transaction, it triggers a `DbUpdateConcurrencyException`, 
+causing the current transaction to be rolled back.
+
+It's probably not the best approach to use datetime as a row version, since SQLite does not keep fractional seconds, but for MS SQL it would work.
+For SQLite I would suggest use `long` and autoincrement in trigger.
 
 ### Logging
 Not yet implemented.

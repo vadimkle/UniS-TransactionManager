@@ -21,17 +21,15 @@ public class TransactionService
 
     public async Task<ClientBalanceDto> GetClientBalanceAsync(Guid clientId)
     {
-        var transaction = await _repository.ListAll()
-            .OrderByDescending(t => t.CreatedDateUtc)
-            .FirstOrDefaultAsync(t => t.ClientId == clientId);
+        var client = await _repository.GetClientByIdAsync(clientId);
 
-        if (transaction == null)
+        if (client == null)
         {
             throw new KeyNotFoundException($"Client not found. Client ID: {clientId}.");
         }
 
         return new ClientBalanceDto
-        { BalanceDateTime = transaction.CreatedDateUtc, Balance = transaction.ClientBalance };
+        { BalanceDateTime = client.LastUpdated, Balance = client.Balance };
     }
 
     public async Task<(DateTime insertDateTime, decimal clientBalance)> AddTransactionAsync(TransactionDto transaction)
@@ -122,7 +120,9 @@ public class TransactionService
             Date = DateTime.UtcNow,
         };
 
-        var currentBalance = (await GetClientBalanceAsync(clientId)).Balance;
+        var client = await _repository.GetClientByIdAsync(clientId);
+        var currentBalance = client!.Balance;
+
         if (revertedTransaction.Credit.HasValue)
         {
             compensatingTransaction.ClientBalance = currentBalance + revertedTransaction.Credit.Value;
@@ -133,6 +133,9 @@ public class TransactionService
             compensatingTransaction.ClientBalance = currentBalance - revertedTransaction.Debit.Value;
             compensatingTransaction.Debit = -revertedTransaction.Debit.Value;
         }
+        client.Balance = compensatingTransaction.ClientBalance;
+        _repository.UpdateClient(client);
+
         revertedTransaction.RevertedById = compensatingTransaction.TransactionId;
         await _repository.AddTransactionAsync(compensatingTransaction);
         _repository.UpdateTransaction(revertedTransaction);

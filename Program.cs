@@ -23,7 +23,7 @@ namespace TransactionManager
             var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
             builder.Services.AddDbContext<TransactionContext>(options =>
                 options.UseSqlite(connectionString)
-                    /*.EnableSensitiveDataLogging()*/);
+                    .EnableSensitiveDataLogging());
 
             builder.Services.AddControllers();
 
@@ -64,11 +64,11 @@ namespace TransactionManager
             await context.Database.OpenConnectionAsync();
             if (await context.Database.EnsureCreatedAsync())
             {
-                await context.Database.ExecuteSqlRawAsync(@"CREATE TRIGGER UpdateClientVersion
-AFTER UPDATE ON Clients
+                await context.Database.ExecuteSqlRawAsync(@$"CREATE TRIGGER UpdateClientVersion
+AFTER UPDATE ON {nameof(TransactionContext.Clients)}
 BEGIN
     UPDATE Clients
-    SET Version = Version + 1
+    SET LastUpdated = DATETIME()
     WHERE rowid = NEW.rowid;
 END;");
             }

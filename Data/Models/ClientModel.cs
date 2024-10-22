@@ -12,5 +12,5 @@ public class ClientModel
     public int Id { get; set; }
     public Guid ClientId { get; set; }
     public decimal Balance { get; set; }
-    public ulong Version { get; set; }
+    public DateTime LastUpdated { get; set; }
 }

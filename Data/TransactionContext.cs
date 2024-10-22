@@ -41,9 +41,9 @@ public class TransactionContext : DbContext
             .HasDefaultValueSql("DATETIME()");
 
         modelBuilder.Entity<ClientModel>()
-            .Property(p => p.Version)
+            .Property(p => p.LastUpdated)
             .IsRowVersion()
-            .HasDefaultValue(0);
+            .HasDefaultValueSql("DATETIME()");
 
         base.OnModelCreating(modelBuilder);
     }
