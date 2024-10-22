@@ -39,4 +39,4 @@ For SQLite I would suggest use `long` and autoincrement in trigger.
 Not yet implemented.
 
 ### Tests
-Not yet implemented.
+Test cover most business logic implemented in `TransactionService`
